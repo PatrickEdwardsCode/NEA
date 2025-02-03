@@ -1,0 +1,384 @@
+import tkinter as tk
+from tkinter import messagebox
+import sqlite3
+from datetime import datetime
+from passlib.hash import pbkdf2_sha256  # Import passlib for password hashing
+
+# Setup SQLite Database (Create tables if not exist)
+def setup_database():
+    conn = sqlite3.connect('reservation_system.db')
+    cursor = conn.cursor()
+
+    # Create Users table with role
+    cursor.execute(''' 
+    CREATE TABLE IF NOT EXISTS Users (
+        user_id INTEGER PRIMARY KEY AUTOINCREMENT,
+        username TEXT UNIQUE NOT NULL,
+        password TEXT NOT NULL,
+        dob TEXT NOT NULL,
+        role TEXT NOT NULL DEFAULT 'user'  -- 'user', 'admin', or 'owner'
+    )
+    ''')
+
+    # Create Reservations table
+    cursor.execute('''
+    CREATE TABLE IF NOT EXISTS Reservations (
+        reservation_id INTEGER PRIMARY KEY AUTOINCREMENT,
+        date TEXT NOT NULL,
+        time TEXT NOT NULL,
+        available BOOLEAN NOT NULL
+    )
+    ''')
+
+    # Create Bookings table
+    cursor.execute('''
+    CREATE TABLE IF NOT EXISTS Bookings (
+        booking_id INTEGER PRIMARY KEY AUTOINCREMENT,
+        user_id INTEGER NOT NULL,
+        reservation_id INTEGER NOT NULL,
+        FOREIGN KEY(user_id) REFERENCES Users(user_id),
+        FOREIGN KEY(reservation_id) REFERENCES Reservations(reservation_id)
+    )
+    ''')
+
+    # Insert the user "Dark" if it doesn't already exist
+    cursor.execute('''
+    SELECT * FROM Users WHERE username = 'Dark'
+    ''')
+    if not cursor.fetchone():
+        # Insert "Dark" user with owner privileges if they don't exist
+        cursor.execute('''
+        INSERT INTO Users (username, password, dob, role)
+        VALUES (?, ?, ?, ?)
+        ''', ('Dark', pbkdf2_sha256.hash('123'), '2000-01-01', 'owner'))
+
+    conn.commit()
+    conn.close()
+
+# Database Operations (Insert, Fetch, Book)
+def insert_user(username, password, dob, role='user'):
+    conn = sqlite3.connect('reservation_system.db')
+    cursor = conn.cursor()
+
+    # Check if the username already exists
+    cursor.execute('''
+    SELECT * FROM Users WHERE username = ?
+    ''', (username,))
+    existing_user = cursor.fetchone()
+
+    if existing_user:
+        # If user exists, show an error message and return
+        messagebox.showerror("Registration Error", "Username already exists. Please choose a different username.")
+        conn.close()
+        return
+
+    # Hash the password before saving it to the database
+    hashed_password = pbkdf2_sha256.hash(password)
+    
+    cursor.execute('''
+    INSERT INTO Users (username, password, dob, role)
+    VALUES (?, ?, ?, ?)
+    ''', (username, hashed_password, dob, role))
+    conn.commit()
+    conn.close()
+
+def insert_reservation(date, time, available=True):
+    conn = sqlite3.connect('reservation_system.db')
+    cursor = conn.cursor()
+    cursor.execute('''
+    INSERT INTO Reservations (date, time, available)
+    VALUES (?, ?, ?)
+    ''', (date, time, available))
+    conn.commit()
+    conn.close()
+
+def fetch_user(username, password):
+    conn = sqlite3.connect('reservation_system.db')
+    cursor = conn.cursor()
+    cursor.execute('''
+    SELECT * FROM Users WHERE username = ?
+    ''', (username,))
+    user = cursor.fetchone()
+    conn.close()
+
+    # Verify if the password is correct using passlib
+    if user and pbkdf2_sha256.verify(password, user[2]):  # user[2] is the hashed password
+        return user
+    return None
+
+def fetch_available_reservations():
+    conn = sqlite3.connect('reservation_system.db')
+    cursor = conn.cursor()
+    cursor.execute('''
+    SELECT reservation_id, date, time, available FROM Reservations WHERE available = 1
+    ''')
+    reservations = cursor.fetchall()
+    conn.close()
+    return reservations
+
+def fetch_all_users():
+    conn = sqlite3.connect('reservation_system.db')
+    cursor = conn.cursor()
+    cursor.execute('''
+    SELECT user_id, username, role FROM Users
+    ''')
+    users = cursor.fetchall()
+    conn.close()
+    return users
+
+def book_reservation(user_id, reservation_id):
+    conn = sqlite3.connect('reservation_system.db')
+    cursor = conn.cursor()
+
+    # Insert booking into the Bookings table
+    cursor.execute('''
+    INSERT INTO Bookings (user_id, reservation_id)
+    VALUES (?, ?)
+    ''', (user_id, reservation_id))
+
+    # Update the Reservations table to mark the reservation as unavailable
+    cursor.execute('''
+    UPDATE Reservations SET available = 0 WHERE reservation_id = ?
+    ''', (reservation_id,))
+    
+    conn.commit()
+    conn.close()
+
+# Tkinter UI Functions
+def clear_page():
+    for widget in root.winfo_children():
+        widget.destroy()
+
+def show_main_menu():
+    clear_page()
+
+    title_label = tk.Label(root, text="Main Menu", font=('Arial', 30))
+    title_label.pack(pady=30)
+
+    login_button = tk.Button(root, text="Log in", font=('Arial', 15), command=show_login_page)
+    login_button.pack(pady=10)
+
+    register_button = tk.Button(root, text="Register", font=('Arial', 15), command=show_register_page)
+    register_button.pack(pady=10)
+
+    # Add Reset Data button
+    reset_button = tk.Button(root, text="Reset All Data", font=('Arial', 15), command=reset_all_data)
+    reset_button.pack(pady=10)
+
+def show_register_page():
+    clear_page()
+
+    register_label = tk.Label(root, text="Register Page", font=('Arial', 20))
+    register_label.pack(pady=20)
+
+    username_label = tk.Label(root, text="Username")
+    username_label.pack(pady=5)
+    username_entry = tk.Entry(root)
+    username_entry.pack(pady=5)
+
+    password_label = tk.Label(root, text="Password")
+    password_label.pack(pady=5)
+    password_entry = tk.Entry(root, show="*")
+    password_entry.pack(pady=5)
+
+    dob_label = tk.Label(root, text="Date of Birth (YYYY-MM-DD)")
+    dob_label.pack(pady=5)
+    dob_entry = tk.Entry(root)
+    dob_entry.pack(pady=5)
+
+    register_button = tk.Button(root, text="Submit Registration", command=lambda: submit_registration(username_entry.get(), password_entry.get(), dob_entry.get()))
+    register_button.pack(pady=10)
+
+    back_button = tk.Button(root, text="Back to Main Menu", command=show_main_menu)
+    back_button.pack(pady=10)
+
+def submit_registration(username, password, dob):
+    if username and password and dob:  # Ensure all fields are filled
+        # Ensure the date is in the correct format
+        try:
+            datetime.strptime(dob, '%Y-%m-%d')  # Validate date format
+            insert_user(username, password, dob)
+            show_main_menu()  # Redirect to the main menu after registration
+        except ValueError:
+            messagebox.showerror("Invalid Date Format", "Please use the correct date format (YYYY-MM-DD).")
+    else:
+        messagebox.showerror("Error", "Please fill in all the fields.")
+
+def show_login_page():
+    clear_page()
+
+    login_label = tk.Label(root, text="Login Page", font=('Arial', 20))
+    login_label.pack(pady=20)
+
+    username_label = tk.Label(root, text="Username")
+    username_label.pack(pady=5)
+    username_entry = tk.Entry(root)
+    username_entry.pack(pady=5)
+
+    password_label = tk.Label(root, text="Password")
+    password_label.pack(pady=5)
+    password_entry = tk.Entry(root, show="*")
+    password_entry.pack(pady=5)
+
+    login_button = tk.Button(root, text="Submit Login", command=lambda: submit_login(username_entry.get(), password_entry.get()))
+    login_button.pack(pady=10)
+
+    back_button = tk.Button(root, text="Back to Main Menu", command=show_main_menu)
+    back_button.pack(pady=10)
+
+def submit_login(username, password):
+    user = fetch_user(username, password)
+    if user:
+        global current_user_id
+        current_user_id = user[0]  # Store the user ID after successful login
+        messagebox.showinfo("Login Info", f"Login successful! Welcome {username}.")
+        if user[4] == 'owner':  # If the logged in user is 'owner'
+            show_owner_page()  # Show owner page where they can manage users and reservations
+        elif user[4] == 'admin':
+            show_admin_page()  # Show admin page
+        else:
+            show_reservation_page()  # Show reservation page for normal users
+    else:
+        messagebox.showerror("Login Error", "Invalid login credentials. Please register first or check your details.")
+
+# New function to show available reservations to users
+def show_reservation_page():
+    clear_page()
+
+    reservation_label = tk.Label(root, text="Available Reservations", font=('Arial', 20))
+    reservation_label.pack(pady=20)
+
+    # Fetch available reservations from the database
+    available_reservations = fetch_available_reservations()
+
+    if available_reservations:
+        for reservation in available_reservations:
+            reservation_info = f"Reservation ID: {reservation[0]}, Date: {reservation[1]}, Time: {reservation[2]}"
+            reservation_label = tk.Label(root, text=reservation_info)
+            reservation_label.pack(pady=5)
+
+        # Allow the user to book a reservation
+        book_button = tk.Button(root, text="Book Reservation", command=lambda: book_reservation_page(available_reservations))
+        book_button.pack(pady=10)
+
+    else:
+        no_reservations_label = tk.Label(root, text="No reservations available at the moment.")
+        no_reservations_label.pack(pady=10)
+
+    back_button = tk.Button(root, text="Back to Main Menu", command=show_main_menu)
+    back_button.pack(pady=10)
+
+def book_reservation_page(available_reservations):
+    reservation_id = available_reservations[0][0]  # For simplicity, book the first available reservation
+    book_reservation(current_user_id, reservation_id)
+    messagebox.showinfo("Reservation", "Reservation booked successfully!")
+    show_reservation_page()
+
+# Owner Functions
+def show_owner_page():
+    clear_page()
+
+    owner_label = tk.Label(root, text="Owner Dashboard", font=('Arial', 20))
+    owner_label.pack(pady=20)
+
+    # Option to manage users (view, modify roles)
+    manage_users_button = tk.Button(root, text="Manage Users", command=show_user_management_page)
+    manage_users_button.pack(pady=10)
+
+    # Option to add/remove reservations
+    manage_reservations_button = tk.Button(root, text="Manage Reservations", command=show_manage_reservations_page)
+    manage_reservations_button.pack(pady=10)
+
+    back_button = tk.Button(root, text="Back to Main Menu", command=show_main_menu)
+    back_button.pack(pady=10)
+
+# User Management Page
+def show_user_management_page():
+    clear_page()
+
+    user_label = tk.Label(root, text="Manage Users", font=('Arial', 20))
+    user_label.pack(pady=20)
+
+    users = fetch_all_users()
+    for user in users:
+        user_info = f"ID: {user[0]}, Username: {user[1]}, Role: {user[2]}"
+        user_label = tk.Label(root, text=user_info)
+        user_label.pack(pady=5)
+
+    back_button = tk.Button(root, text="Back to Owner Dashboard", command=show_owner_page)
+    back_button.pack(pady=10)
+
+# Manage Reservations
+def show_manage_reservations_page():
+    clear_page()
+
+    reservations_label = tk.Label(root, text="Manage Reservations", font=('Arial', 20))
+    reservations_label.pack(pady=20)
+
+    # Option to add a reservation
+    add_reservation_button = tk.Button(root, text="Add Reservation", command=add_reservation)
+    add_reservation_button.pack(pady=10)
+
+    # Fetch existing reservations
+    available_reservations = fetch_available_reservations()
+    for reservation in available_reservations:
+        reservation_info = f"Reservation ID: {reservation[0]}, Date: {reservation[1]}, Time: {reservation[2]}"
+        reservation_label = tk.Label(root, text=reservation_info)
+        reservation_label.pack(pady=5)
+
+    back_button = tk.Button(root, text="Back to Owner Dashboard", command=show_owner_page)
+    back_button.pack(pady=10)
+
+def add_reservation():
+    # Simple input for adding a reservation (Date and Time)
+    def submit_reservation(date, time):
+        insert_reservation(date, time)
+        messagebox.showinfo("Reservation Added", "The reservation has been added.")
+        show_manage_reservations_page()
+
+    clear_page()
+    label = tk.Label(root, text="Enter Reservation Date (YYYY-MM-DD)", font=('Arial', 15))
+    label.pack(pady=10)
+
+    date_entry = tk.Entry(root)
+    date_entry.pack(pady=5)
+
+    label_time = tk.Label(root, text="Enter Reservation Time (HH:MM)", font=('Arial', 15))
+    label_time.pack(pady=10)
+
+    time_entry = tk.Entry(root)
+    time_entry.pack(pady=5)
+
+    submit_button = tk.Button(root, text="Add Reservation", command=lambda: submit_reservation(date_entry.get(), time_entry.get()))
+    submit_button.pack(pady=10)
+
+    back_button = tk.Button(root, text="Back to Manage Reservations", command=show_manage_reservations_page)
+    back_button.pack(pady=10)
+
+# Function to reset all data
+def reset_all_data():
+    confirm_reset = messagebox.askyesno("Confirm Reset", "Are you sure you want to reset all user data and reservations? This action cannot be undone.")
+    if confirm_reset:
+        conn = sqlite3.connect('reservation_system.db')
+        cursor = conn.cursor()
+        cursor.execute("DELETE FROM Users")
+        cursor.execute("DELETE FROM Reservations")
+        cursor.execute("DELETE FROM Bookings")
+        conn.commit()
+        conn.close()
+        messagebox.showinfo("Data Reset", "All user data and reservations have been reset.")
+        show_main_menu()
+
+# Main Window
+root = tk.Tk()
+root.title("Reservation System")
+root.geometry("500x500")
+
+# Setup the database when the app starts
+setup_database()
+
+# Show the main menu when the program starts
+show_main_menu()
+
+# Run the application
+root.mainloop()
